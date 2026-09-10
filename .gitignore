@@ -11,9 +11,10 @@ node_modules/
 .next/
 out/
 build/
+*.tsbuildinfo
 .DS_Store
 
-# Data
+# Data / model artifacts
 dataset.csv
 siem/model/securebert/
 siem/mitre_attack.json
