@@ -1,79 +1,105 @@
 # SecureBERT Threat Analysis Lab
 
-**Research prototype for semantic command classification, session fingerprinting, behavioral clustering, and analyst-facing threat telemetry.**
+**A research prototype exploring how semantic command understanding and behavioral similarity can add context beyond signature-only security detection.**
 
-This repository captures an earlier stage of my security/AI engineering work. The newer **SentinelIQ** project extends the same interest into a production-style streaming architecture with Kafka, PostgreSQL, model-aligned explanations, observability, Docker, and stronger ML-integrity tests.
+This project represents an earlier stage of my AI-security work. It investigates a practical security question:
 
-## Problem
+> **Can suspicious behavior remain recognizable when exact commands, IP addresses or surface-level indicators change?**
 
-Security telemetry is noisy, repeated attacker behavior can change surface details, and purely signature-based detection misses semantic similarity. This lab explores a hybrid approach:
+The lab combines deterministic rules, SecureBERT command classification, session embeddings, cosine similarity and DBSCAN clustering, then surfaces results through an analyst-facing API/dashboard.
 
-- deterministic MITRE-oriented rules for high-confidence patterns
-- SecureBERT inference for semantic command classification
-- BERT session embeddings for similarity-based identity matching
-- DBSCAN clustering for behavioral grouping
-- a FastAPI/WebSocket backend and Next.js analyst dashboard
+For the newer production-style evolution of this work, see **[SentinelIQ](https://github.com/hasan-rajab/SentinelIQ)**.
 
-The system is intentionally a **lab**, not a claim of production autonomous defense.
+> **Scope:** this repository is a research lab. It is not a production autonomous-blocking system.
+
+---
+
+## Security value
+
+Signature and rule-based controls remain useful for known patterns, but they can miss behavior that is semantically similar while syntactically different.
+
+This lab explores three complementary signals:
+
+1. **known-pattern detection** through deterministic MITRE-oriented rules;
+2. **semantic classification** through SecureBERT;
+3. **behavioral similarity** through session embeddings and unsupervised clustering.
+
+The intended analyst value is better context for investigation — not automatic enforcement.
+
+---
 
 ## Architecture
 
 ```text
 Honeypot / command telemetry
-            |
-            v
+            ↓
        FastAPI backend
-       /      |      \
-      v       v       v
- rules    SecureBERT  session embeddings
-      \       |       /
-       \      v      /
-        threat classification
-               |
-      +--------+---------+
-      |                  |
-      v                  v
-MITRE explanation   similarity + DBSCAN
-      |                  |
-      +--------+---------+
-               v
-        WebSocket stream
-               |
-               v
-        Next.js dashboard
+       ┌────┼──────────┐
+       ↓    ↓          ↓
+    rules SecureBERT session embeddings
+       └────┼──────────┘
+            ↓
+     threat classification
+       ┌────┴─────────┐
+       ↓              ↓
+MITRE context    similarity + DBSCAN
+       └────┬─────────┘
+            ↓
+      WebSocket stream
+            ↓
+     Next.js dashboard
 ```
+
+---
 
 ## Engineering evidence
 
 ### Hybrid classification
-Obvious patterns can be handled deterministically before invoking the model. Unmatched commands are normalized and passed to SecureBERT for semantic classification.
+High-confidence known patterns can be handled deterministically before unmatched commands are normalized and passed into SecureBERT.
 
 ### Session fingerprinting
-Session-level BERT embeddings are compared with prior sessions using cosine similarity. The goal is to explore whether behavior can remain recognizable even when an IP address or exact command text changes.
+Session-level BERT embeddings are compared with earlier sessions through cosine similarity to explore behavior identity beyond IP address or exact command text.
 
 ### Behavioral clustering
-DBSCAN groups session embeddings without requiring a predefined number of clusters and surfaces noise points as unusual behavior.
+DBSCAN groups session embeddings without requiring a fixed cluster count and treats noise points as potentially unusual behavior.
 
-### Analyst-facing application
-FastAPI exposes telemetry, sessions, fingerprints, clusters, and report generation. A Next.js dashboard consumes the live stream for investigation.
+### Analyst-facing delivery
+FastAPI exposes telemetry, sessions, fingerprints, clusters and report generation; a Next.js dashboard consumes the live stream.
+
+### CI reproducibility
+The repository's reference CI run #5 completed successfully on **10 September 2026**, including source checks and a successful optimized Next.js production build.
+
+---
 
 ## Safety boundary
 
-The prototype can return a `BLOCK` recommendation when configured thresholds are met, but this repository should **not** be deployed as an autonomous production enforcement system. Real production use would require calibrated external evaluation, policy controls, human review where appropriate, hardened identity/access controls, durable storage, rate limiting, and operational rollback procedures.
+The prototype can emit a `BLOCK` recommendation under configured conditions, but the repository should **not** be deployed as autonomous enforcement.
 
-## Stack
+A real production path would require:
 
-| Layer | Technology |
-| --- | --- |
-| ML | Python, PyTorch, Transformers, SecureBERT, scikit-learn, DBSCAN |
-| API | FastAPI, WebSockets |
-| Frontend | Next.js 14, TypeScript/Tailwind |
-| Probe | Python socket programming |
-| Threat context | MITRE ATT&CK data |
+- calibrated external evaluation;
+- durable storage;
+- enterprise identity and authorization;
+- hardened APIs and rate limiting;
+- human review and policy controls;
+- production observability;
+- rollback/incident procedures.
+
+---
+
+## Technology
+
+**ML:** Python · PyTorch · Transformers · SecureBERT · scikit-learn · DBSCAN  
+**API:** FastAPI · WebSockets  
+**Frontend:** Next.js · TypeScript/Tailwind  
+**Threat context:** MITRE ATT&CK  
+**Probe:** Python socket programming
+
+---
 
 ## Run locally
 
-### Backend
+Backend:
 
 ```bash
 python -m venv .venv
@@ -82,15 +108,13 @@ pip install -r siem/requirements.txt
 uvicorn siem.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-SecureBERT artifacts are expected under `siem/model/securebert/` and are intentionally not committed when they are too large for normal source control.
-
-### Probe
+Probe:
 
 ```bash
 python agent/listener.py
 ```
 
-### Dashboard
+Dashboard:
 
 ```bash
 cd dashboard
@@ -98,34 +122,15 @@ npm ci
 npm run dev
 ```
 
-## Repository structure
+Large SecureBERT artifacts are intentionally excluded from normal source control.
 
-```text
-agent/                  # telemetry/honeypot probe
-siem/                   # API, classification, session analysis
-siem/model/             # model integration
-dashboard/              # analyst UI
-mitre_attack.json       # MITRE dataset used by the lab
-.github/workflows/ci.yml
-```
-
-## Verification
-
-The repository includes a lightweight model test harness at `siem/test_engine.py`. CI performs source compilation and a production frontend build without pretending that unavailable model weights can be validated in a clean runner.
-
-## Limitations and next steps
-
-- model evaluation here is research-oriented rather than a production benchmark
-- the in-memory session/identity stores are not durable
-- thresholds require external calibration
-- the MITRE data snapshot is intentionally bundled for reproducibility but increases repository size
-- model artifacts must be supplied separately
-- production identity, authorization, observability, persistence, deployment, and regression gates are demonstrated more completely in **SentinelIQ**
+---
 
 ## Portfolio progression
 
-This repository is useful as evidence of the evolution of an idea. It demonstrates semantic security analysis and full-stack experimentation; **SentinelIQ** demonstrates the later engineering step toward streaming ingestion, durable storage, observability, containerization, and serving-path integrity.
+This project is useful because it shows the **evolution of the problem**, not because it is the newest architecture.
 
-## License
+- **SecureBERT Threat Lab:** semantic classification, session similarity, clustering, analyst UI.
+- **SentinelIQ:** streaming ingestion, durable persistence, multimodal serving, model-aligned explanations, observability, Docker and stronger ML-integrity regression tests.
 
-MIT.
+That progression reflects the move from "can this ML idea work?" to "how would this capability behave inside an operational system?"
